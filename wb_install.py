@@ -86,6 +86,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -581,6 +582,17 @@ class _WorkBuddyInstall:
                 out.append(Path(raw))
         except Exception as exc:  # noqa: BLE001
             _logger.debug("动态定位安装目录失败：%s", exc)
+
+        # 1c) macOS 应用包：`<Name>.app/Contents` 才是 `resources/app.asar`
+        #     的父目录（`_looks_like_install` 认的就是这一层）。
+        #     系统盘固定 /Applications，用户级安装看 ~/Applications；
+        #     打包后的可执行文件名不一定是产品名，所以只拼 `.app` 目录。
+        if sys.platform == "darwin":
+            for root in (Path("/Applications"), Path.home() / "Applications"):
+                for name in _base_names():
+                    base = root / f"{name}.app"
+                    out.append(base / "Contents")
+                    out.append(base)          # 兼容把 Contents 当基目录的手工配置
 
         # 2) 常见安装基目录
         for ev in ("LOCALAPPDATA", "APPDATA", "ProgramFiles",

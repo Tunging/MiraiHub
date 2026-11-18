@@ -27,13 +27,23 @@ Linux 守护脚本的安装方式与环境变量见 `watchdog.sh` 文件头。Do
 
 ## 凭证配置
 
-在已安装官方 Windows 客户端的电脑上执行：
+在有官方桌面端登录态的机器上执行（Windows / macOS 均可）：
 
 ```powershell
 python scripts/export_credential_key.py --output ..\miraihub-private\credential-key.json
 ```
 
-脚本拒绝覆盖已有文件。将生成文件放到服务器 Web 根目录之外，仅允许服务用户读取，并按源码中的兼容参数指定文件路径。参数原名与格式以 `admin/credential_codec.py` 和脚本帮助为准。该文件包含私有密钥材料，不能提交到 Git、放入镜像或随安装包发布。
+- Windows：从 `<安装目录>\WorkBuddy.exe` 取密钥。
+- macOS：自动定位 `/Applications/WorkBuddy.app/Contents`，读取 bundle 的
+  `Info.plist`（`CFBundleExecutable`）后同样以 `ELECTRON_RUN_AS_NODE=1` 取密钥。
+- 密钥是**每个客户端安装实例独有**的，必须从「凭证来源的那台机器」导出；
+  导出别的机器的密钥，解密时会报「凭证加密版本与本机 WorkBuddy 不匹配」。
+- 服务端（Linux 容器等）没有客户端可执行文件，只能靠这个文件：把生成的
+  `credential-key.json` 放到服务器 Web 根目录之外、仅服务用户可读，再用
+  `WORKBUDDY_CREDENTIAL_KEY_FILE` 指向它（或放在默认路径
+  `admin/platform/workbuddy/.workbuddy/credential-key.json`）。
+
+脚本拒绝覆盖已有文件。参数原名与格式以 `admin/credential_codec.py` 和脚本帮助为准。该文件包含私有密钥材料，不能提交到 Git、放入镜像或随安装包发布。
 
 ## ASAR 工具
 

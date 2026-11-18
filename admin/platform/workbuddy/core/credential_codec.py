@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import sys
 
 
 class CredentialDecodeError(ValueError):
@@ -50,7 +51,8 @@ def _installed_key(executable: str, mtime: int, size: int) -> tuple[str, bytes]:
     try:
         result = subprocess.run([executable, '-e', _KEY_SCRIPT], env=env,
                                 capture_output=True, timeout=10,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+                                creationflags=subprocess.CREATE_NO_WINDOW
+                                if os.name == 'nt' else 0)
         if result.returncode or len(result.stdout) > 4096:
             raise ValueError()
         value = json.loads(result.stdout)
@@ -61,6 +63,43 @@ def _installed_key(executable: str, mtime: int, size: int) -> tuple[str, bytes]:
         return key_id, key
     except Exception:
         raise CredentialDecodeError('无法读取本机客户端的凭证解密能力，请更新 WorkBuddy 或使用手机号授权登录') from None
+
+
+def _client_executable(install_dir) -> Path | None:
+    """本机官方客户端的可执行文件（用于在 Node 模式下向它要密钥）。
+
+    Windows 是 `<install>/WorkBuddy.exe`（也接受改名后的 CodeBuddy.exe）；
+    macOS 的安装基目录是 `.app/Contents`，可执行文件名不固定
+    （WorkBuddy.app 里实际叫 `Electron`），所以读 Info.plist 的
+    `CFBundleExecutable`，读不到才退回目录里唯一的那一个。
+    """
+    if install_dir is None:
+        return None
+    base = Path(install_dir)
+    if os.name == 'nt':
+        for name in ('WorkBuddy.exe', 'CodeBuddy.exe'):
+            exe = base / name
+            if exe.is_file():
+                return exe
+        return None
+    macos = base / 'MacOS'
+    if not macos.is_dir():
+        return None
+    try:
+        import plistlib
+        with open(base / 'Info.plist', 'rb') as file:
+            name = plistlib.load(file).get('CFBundleExecutable')
+    except Exception:
+        name = None
+    if isinstance(name, str) and name:
+        exe = macos / name
+        if exe.is_file():
+            return exe
+    try:
+        candidates = [p for p in macos.iterdir() if p.is_file() and os.access(p, os.X_OK)]
+    except OSError:
+        return None
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _local_key() -> tuple[str, bytes]:
@@ -78,12 +117,11 @@ def _local_key() -> tuple[str, bytes]:
             return key_id, key
         except Exception:
             raise CredentialDecodeError('凭证加密运行配置无效，请管理员重新配置官方客户端加密能力') from None
-    if os.name != 'nt' or os.getenv('WORKBUDDY_ANDROID') == '1':
+    if (os.name != 'nt' and sys.platform != 'darwin') or os.getenv('WORKBUDDY_ANDROID') == '1':
         raise CredentialDecodeError('未配置官方客户端加密能力，请管理员配置 WORKBUDDY_CREDENTIAL_KEY_FILE；也可使用明文备份或手机号授权登录')
     from wb_install import WB
-    install = WB.install_dir()
-    executable = Path(install) / 'WorkBuddy.exe' if install else None
-    if executable is None or not executable.is_file():
+    executable = _client_executable(WB.install_dir())
+    if executable is None:
         raise CredentialDecodeError('这是新版客户端加密凭证，未找到本机 WorkBuddy；请配置客户端安装目录或使用手机号授权登录')
     stat = executable.stat()
     return _installed_key(str(executable), stat.st_mtime_ns, stat.st_size)
