@@ -57,12 +57,14 @@ CLIENT_EXE = "WorkBuddy.exe"
 
 
 def auth_dir() -> Path:
-    """客户端登录态目录（与 `settings.CLIENT_AUTH_DIR` 同一口径）。"""
+    """客户端登录态目录（与 `settings.CLIENT_AUTH_DIR` 同一口径）。
+
+    Windows 上 `%LOCALAPPDATA%` 由 resolve 内的 expandvars 展开；macOS/Linux
+    上没有该环境变量，resolve 按平台默认目录兜底，不再保留未展开的 `%...%`。
+    """
     from admin.config import settings
 
-    raw = settings.CLIENT_AUTH_DIR or os.path.expandvars(
-        r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth")
-    return Path(os.path.expandvars(raw))
+    return Path(settings.resolve_client_auth_dir())
 
 
 def active_info() -> Path:

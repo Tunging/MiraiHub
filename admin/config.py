@@ -10,6 +10,8 @@
 """
 import os
 import logging
+import re
+import sys
 
 from dotenv import load_dotenv
 
@@ -79,11 +81,50 @@ class Settings:
     # 后端（CodeBuddy / WorkBuddy）
     BACKEND = os.getenv("ADMIN_BACKEND", "https://copilot.tencent.com")
 
-    # 本机 WorkBuddy/CodeBuddy 桌面端登录态目录（用于「扫描本机 / 注入切换」）
-    CLIENT_AUTH_DIR = os.getenv(
-        "ADMIN_CLIENT_AUTH_DIR",
-        r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth",
-    )
+    # 本机 WorkBuddy/CodeBuddy 桌面端登录态目录（用于「扫描本机 / 注入切换」）。
+    # 旧默认值是 Windows 模板写法 `%LOCALAPPDATA%\...`：Windows 上 `expandvars`
+    # 能展开，macOS 上既没有这个环境变量也不认 `%VAR%` 语法，路径原样保留，
+    # 目录判定永远失败 —— 「扫描本机账号」因此报「未找到登录目录」（2026-11-16 修复）。
+    # 现在默认值留空，由下面的 `resolve_client_auth_dir()` 按平台推断；
+    # 配了 `ADMIN_CLIENT_AUTH_DIR` 的部署优先用配置值。
+    CLIENT_AUTH_DIR = os.getenv("ADMIN_CLIENT_AUTH_DIR", "").strip()
+
+    # 各平台桌面端登录态默认目录（与 converter.auth_dirs 同一口径）
+    _CLIENT_AUTH_DIR_DEFAULTS = {
+        "win32": r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth",
+        "darwin": "~/Library/Application Support/CodeBuddyExtension/Data/Public/auth",
+        "linux": "~/.local/share/CodeBuddyExtension/Data/Public/auth",
+    }
+
+    @staticmethod
+    def _expand_client_path(raw: str) -> str:
+        """展开路径字符串：引号、`$VAR`/`${VAR}`、`%VAR%`、`~`。
+
+        `%VAR%` 兜底是给 macOS/Linux 上沿用的 Windows 模板值用的：
+        `os.path.expandvars` 只认 `$VAR`；且 `%LOCALAPPDATA%` 在非 Windows
+        上没有对应环境变量，展开不了就按平台默认目录兜底（见 resolve）。
+        """
+        s = str(raw).strip().strip('"').strip("'").strip()
+        s = os.path.expandvars(s)
+        s = re.sub(r"%([^%]+)%",
+                   lambda m: os.getenv(m.group(1)) or m.group(0), s)
+        return os.path.expanduser(s)
+
+    @staticmethod
+    def resolve_client_auth_dir() -> str:
+        """客户端登录态目录：显式配置优先，未配置 / Windows 模板解析失败时按平台推断。
+
+        返回字符串（消费方 `_client_auth_dir` / `auth_dir` 均按 str 处理）。
+        """
+        raw = Settings.CLIENT_AUTH_DIR
+        if raw:
+            expanded = Settings._expand_client_path(raw)
+            # 显式配置解析失败（仍是含 `%` 的模板、或含未展开变量）时回退平台默认
+            if not (re.search(r"%[^%]+%", expanded) or "$" in expanded):
+                return expanded
+        return Settings._expand_client_path(
+            Settings._CLIENT_AUTH_DIR_DEFAULTS.get(sys.platform,
+                                                   Settings._CLIENT_AUTH_DIR_DEFAULTS["linux"]))
 
     # 管理后台登录
     #

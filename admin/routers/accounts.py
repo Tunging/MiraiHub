@@ -768,10 +768,10 @@ def import_accounts_async(body: ImportAsyncIn, request: Request = None,
 
 
 def _client_auth_dir() -> str:
-    d = settings.CLIENT_AUTH_DIR or os.path.expandvars(
-        r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth"
-    )
-    return os.path.expandvars(d)
+    # Windows 上 `%LOCALAPPDATA%` 由 resolve 内的 expandvars 展开；
+    # macOS/Linux 上没有该环境变量，resolve 按平台默认目录兜底
+    # （~/Library/Application Support/... · ~/.local/share/...）。
+    return settings.resolve_client_auth_dir()
 
 
 def _apply_meta(acc: Account, auth_json: str, profile: dict | None = None,
