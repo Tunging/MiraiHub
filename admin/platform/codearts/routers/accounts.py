@@ -42,6 +42,8 @@ def _realm_or_400(realm: str) -> str:
 
 @router.get("/meta")
 def meta(_: bool = Depends(require_admin)):
+    from admin.platform.codearts.core import paths as ca_paths
+
     return {
         "platform": endpoints.PLATFORM,
         "regions": [{"key": "cn", "label": "华为云（cn-north-4）",
@@ -52,9 +54,9 @@ def meta(_: bool = Depends(require_admin)):
                  "自动续期；续期失败的号需要重新登录客户端"),
         # 控制台的「加号」入口按这个字段决定给哪些按钮
         "auth_mode": "local-session-only",
-        "auth_explain": ("CodeArts 的登录态由客户端在 %APPDATA%/codearts/secretStorage "
-                         "下加密保存。请在客户端登录后，用「扫描本机」导入；"
-                         "网关只读，不回写客户端。") ,
+        "auth_explain": ("CodeArts 的登录态由客户端在 %s 下加密保存。"
+                         "请在客户端登录后，用「扫描本机」导入；"
+                         "网关只读，不回写客户端。" % ca_paths.data_dir()),
     }
 
 

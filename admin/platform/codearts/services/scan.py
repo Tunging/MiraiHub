@@ -36,7 +36,17 @@ def mask(value: str, keep: int = 4) -> str:
 
 
 def installed_dirs() -> list[str]:
-    """客户端数据目录（存在的才返回）。"""
+    """客户端数据目录（存在的才返回）。
+
+    按平台解析（macOS 下是 `~/Library/Application Support/...`），不再拼死
+    `%APPDATA%/codearts` —— 那个模板在非 Windows 上展开不了，会把原样串
+    当成「配置目录」显示出来。
+    """
+    from admin.platform.codearts.core import paths
+
+    dirs = paths.data_dir_candidates(all_matches=True)
+    if dirs:
+        return dirs
     path = session.app_data_dir()
     return [path] if os.path.isdir(path) else []
 
