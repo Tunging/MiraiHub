@@ -51,6 +51,23 @@ def installed_dirs() -> list[str]:
     return [path] if os.path.isdir(path) else []
 
 
+def _decrypt_hint(kind: str, detail: str = "") -> str:
+    """「解不开」的排障说明（两端机制不同，不能同一句话敷衡）。"""
+    import sys
+
+    tail = ("　详情：%s" % detail) if detail else ""
+    if kind == "keychain" or sys.platform == "darwin":
+        return ("登录态无法解密：读不到 / 用不上 macOS 钥匙串里的 safeStorage 口令。"
+                "首次扫描时 macOS 会弹「security 想使用钥匙串中的机密信息」，"
+                "请点「始终允许」（只需一次，之后不再提示）；"
+                "其它常见原因：换了 macOS 账户、把数据目录拷到了别的机器；"
+                "无图形会话（Docker / 远程）时改设 “CODEARTS_SAFE_STORAGE_PASSWORD” 后重试。"
+                + tail)
+    return ("登录态无法解密：DPAPI/OSCrypt 密钥不匹配。"
+            "通常是换了 Windows 账户或把数据目录拷到别的机器 —— "
+            "请在当前账户下重新登录一次客户端。" + tail)
+
+
 def discover() -> dict:
     """扫描本机登录态（**不含 AK/SK/STS**）。"""
     dirs = installed_dirs()
@@ -69,17 +86,15 @@ def discover() -> dict:
                     "请先安装并登录 CodeArts 客户端。" % session.app_data_dir())
         elif exc.kind == "no_login":
             hint = "客户端已安装但还没有登录态，请在 CodeArts 里登录一次后重试。"
-        elif exc.kind == "dpapi":
-            hint = ("登录态无法解密：DPAPI/OSCrypt 密钥不匹配。"
-                    "通常是换了 Windows 账户或把数据目录拷到别的机器 —— "
-                    "请在当前账户下重新登录一次客户端。")
+        elif exc.kind in ("dpapi", "keychain", "unsupported"):
+            hint = _decrypt_hint(exc.kind, exc.detail)
         else:
             hint = exc.message
         local = None
 
     if local is not None:
         items.append({
-            "source": session.secret_file(),
+            "source": session.credential_source(),
             "uid": local.uid,
             "user_name": local.user_name,
             "domain_id": mask(local.domain_id),

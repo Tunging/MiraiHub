@@ -42,6 +42,26 @@
 **判据**：`resources/product.json` 里同时有 `auth.iamStsHost` 与
 `kernel.envConfig.inferhubBaseUrl`，就说明走的是「IAM 换临时凭证 → 签名调 API」。
 
+### 1.1 macOS 是**另一份客户端**
+
+macOS 上发的是 VS Code 系的 `CodeArts Agent`（不是同一套 Electron 主进程），
+目录名带空格和大写，`%APPDATA%` 也不存在 —— 路径必须按平台解析
+（`core/paths.py` 的 `DATA_ROOTS` / `DATA_NAMES` / `INSTALL_ROOTS`）：
+
+```
+/Applications/CodeArts Agent.app/Contents/
+  Info.plist                          CFBundleExecutable -> MacOS/<name>
+  MacOS/Electron                      主程序（名字不是 CodeArts）
+  Resources/app/product.json          urlProtocol / snapEngineUrl 在这里
+~/Library/Application Support/CodeArts Agent/    ← userData
+  User/globalStorage/state.vscdb      ← 登录态（safeStorage / Keychain 加密）
+```
+
+`product.json` 的关键差异：`urlProtocol = "codearts-agent"`，刷新时
+`client_id` 必须用它（Windows 是 `codearts`），否则上游只回一句
+`invalid_client`。`snapEngineUrl` 与 Windows 相同（`snap-access.cn-north-4`），
+所以导入后的凭证走的还是同一套网关转发。
+
 ---
 
 ## 2. 凭证存在哪（这一节最能省时间）
@@ -68,7 +88,36 @@ Python 侧就两步（`core/session.py`）：DPAPI 解密钥 → AESGCM 解文�
 **注意**：`v10` 前缀必须去掉、nonce 是 12 字节，少一个字节就解不出来，
 而且错误只是 `InvalidTag`，不会告诉你哪里错了。
 
-解出来的结构：
+### 2.1 macOS：同一个 `v10`，但加密算法完全不同
+
+macOS **没有 DPAPI**，`Local State` 里也没有 `os_crypt.encrypted_key`：
+
+```
+Keychain「CodeArts Agent Safe Storage」口令
+  --PBKDF2(sha1, salt="saltysalt", iter=1003, dkLen=16)--> key16
+v10 | AES-128-CBC(明文 + PKCS#7, key16, iv=b" " * 16)
+```
+
+登录态不在 `secretStorage/*.enc`，而在 VS Code 的 `state.vscdb`：
+
+```
+ItemTable[ secret://{"extensionId":"huaweicloud.authentication",
+                     "key":"HuaweiCloudSession"} ]
+  = {"type":"Buffer","data":[118,49,48,...]}      ← 118/49/48 = "v10"
+```
+
+坑：两端前缀都叫 `v10`，但 Windows 是 AES-256-GCM、macOS 是 AES-128-CBC，
+套错只会得到 `InvalidTag` / padding 非法。实现按 `sys.platform` 分叉
+（`admin/platform/mac_safe_storage.py`）。
+
+第二个坑：Keychain 条目默认只信任创建它的客户端，`security` 第一次读会弹
+「想使用钥匙串中的机密信息」——**必须点「始终允许」**，之后服务进程才能无感读取；
+无图形会话时用 `CODEARTS_SAFE_STORAGE_PASSWORD` / `CODEARTS_SAFE_STORAGE_KEY` 兜底。
+读取一律带 15s 超时，避免把请求线程卡死在弹窗上。
+
+### 2.2 落盘结构（两代字段名不同，读取时归一化）
+
+Windows（`session.*`）解出来的结构：
 
 ```json
 {"session": {"accessKey","secretKey","securityToken","refreshToken",
@@ -76,6 +125,20 @@ Python 侧就两步（`core/session.py`）：DPAPI 解密钥 → AESGCM 解文�
  "loginContext": {"pkcePair": {"codeVerifier": "..."},
                   "dpopKeyPair": {"privateKey": "{JWK}", "publicKey": "{JWK}"}}}
 ```
+
+macOS（`CodeArts Agent`）是**扁平**的，且字段名不同：
+
+```json
+{"account": {"id", "label"}, "accessKey", "secretKey", "securitytoken",
+ "expires_at": "2026-11-22T08:08:24.83Z", "domainId", "refresh_token",
+ "loginContext": {"pkcePair": {"codeVerifier"},
+                  "dpopKeyPair": {"privateKeyJwk": {...}, "publicKeyJwk": {...}}}}
+```
+
+差异一览（`session._session_from_payload()` 负责抹平）：
+`securityToken` / `securitytoken`、`expiresAt`(毫秒) / `expires_at`(ISO)、
+`userId` / `account.id`、`userName` / `account.label`、
+`privateKey`(JSON 串) / `privateKeyJwk`(对象)。
 
 `loginContext` 是**续期的钥匙**：华为云 STS 刷新要求 `DPoP` 头 + `code_verifier`。
 两者都随登录态落盘，所以我们能独立续期（不像 Loomy 只能重登）。
@@ -186,8 +249,9 @@ POST sts/v1/oauth2/tokens
 admin/platform/codearts/
   core/signer.py          华为云签名（含 canonical_request 便于 diff）
   core/client.py          对话 / 模型 / 额度 / 身份 + 错误分类
-  core/session.py         OSCrypt 解密 + DPoP 续期
-  core/paths.py           安装与数据目录
+  core/session.py         OSCrypt 解密（Win GCM / mac CBC）+ 登录态归一化 + DPoP 续期
+  core/paths.py           安装与数据目录（含 macOS 的 CodeArts Agent / .app 布局）
+  ../../mac_safe_storage.py  macOS Keychain 口令 + PBKDF2 + v10 CBC（跨平台共用）
   services/accounts.py    凭证、额度、导入导出、视图
   services/scan.py        本机扫描（不含 AK/SK）
   platform_gateway.py     11 项 AccountOps + ClientProbe + 概览卡片
