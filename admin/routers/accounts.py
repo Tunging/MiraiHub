@@ -1264,12 +1264,18 @@ def _token_fields(a: Account) -> dict:
 
 
 def _gateway_fields(a: Account, now: datetime) -> dict:
+    # `session_dead` 是**无时间戳的持久状态**（登录态已确证失效，不会有
+    # `cool_until`）。漏掉它的话这个号会落到 "ready" —— 界面显示可用，
+    # 选号层 `_looks_login_dead` 却把它排除，用户对着绿标问为什么 503。
+    # `manual_disabled` 同理（用户手动停用留下的标记），一并如实上报。
     states = [(a.cool_until, a.cool_kind or "cooling"),
               (a.breaker_until, "breaker"), (a.degrade_until, "degraded")]
     until, reason = max(((t, kind) for t, kind in states if t and t > now),
                         default=(None, ""), key=lambda entry: entry[0])
+    if not until and a.status == "active" and a.cool_kind in ("session_dead", "manual_disabled"):
+        reason = a.cool_kind
     return {
-        "gateway_state": "disabled" if a.status != "active" else "cooling" if until else "ready",
+        "gateway_state": "disabled" if a.status != "active" else "cooling" if reason else "ready",
         "gateway_until": until.isoformat() + "Z" if until else None,
         "gateway_reason": reason,
     }

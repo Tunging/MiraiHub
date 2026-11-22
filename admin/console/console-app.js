@@ -4303,6 +4303,8 @@ function accountLimitBadge(a) {
     waf: '请求被网关拦截',
     not_found: '接口暂不可用',
     upstream_internal: '上游暂时故障',
+    session_dead: '登录态已失效',
+    manual_disabled: '已手动停用',
   };
   const until = a.gateway_until;
   const cooling = a.gateway_state === 'cooling' && (!until || Date.parse(until) > Date.now());
@@ -4343,6 +4345,8 @@ function accountLimitBadge(a) {
       waf: '网关拦截',
       not_found: '接口不可用',
       upstream_internal: '上游故障',
+      session_dead: '登录失效',
+      manual_disabled: '手动停用',
     }[a.gateway_reason] || '暂时冷却';
     const text = remain
       ? `冷却 ${remain} · ${shortReason}`
